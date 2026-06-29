@@ -1,0 +1,1455 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+
+// ─────────────────────────────────────────────────────────────
+// MOCK DATA
+// ─────────────────────────────────────────────────────────────
+
+const CHARITIES = [
+  { id: "c1", name: "UAE Food Bank",      category: "food_bank",    logo: "🏦", total: 48200 },
+  { id: "c2", name: "Dar Al Ber Society", category: "humanitarian", logo: "🤝", total: 31500 },
+  { id: "c3", name: "Dubai Cares",        category: "education",    logo: "📚", total: 22800 },
+  { id: "c4", name: "Al Jalila Foundation", category: "healthcare", logo: "🏥", total: 19600 },
+];
+
+const INITIAL_LOTS = [
+  {
+    id: "L1", title: "Artisan Sourdough & Pastry Mix", supplier: "Majlis Bakehouse",
+    category: "bakery", temperature: "ambient", quantity: 42, unit: "kg",
+    currentPrice: 38, reservePrice: 20, bidCount: 7, buyNow: 95,
+    auctionEnd: Date.now() + 47 * 60_000, pickupStart: Date.now() + 2 * 3600_000,
+    pickupEnd: Date.now() + 6 * 3600_000, status: "active", urgency: 0.82,
+    allergens: ["gluten"], zone: "Dubai Downtown",
+    description: "Day-old sourdough loaves, croissants, and assorted pastries. Excellent for catering or food programs.",
+    bids: [
+      { buyer: "F***", amount: 38, at: "2 min ago" },
+      { buyer: "A***", amount: 34, at: "8 min ago" },
+      { buyer: "K***", amount: 28, at: "15 min ago" },
+    ],
+  },
+  {
+    id: "L2", title: "Fresh Produce Bundle – Mixed Vegetables", supplier: "Al Baraka Farm",
+    category: "produce", temperature: "chilled", quantity: 68, unit: "kg",
+    currentPrice: 54, reservePrice: 30, bidCount: 4, buyNow: null,
+    auctionEnd: Date.now() + 2.3 * 3600_000, pickupStart: Date.now() + 4 * 3600_000,
+    pickupEnd: Date.now() + 8 * 3600_000, status: "active", urgency: 0.45,
+    allergens: [], zone: "Dubai Deira",
+    description: "Tomatoes, cucumbers, peppers, and leafy greens. Surplus from today's market delivery.",
+    bids: [
+      { buyer: "R***", amount: 54, at: "22 min ago" },
+      { buyer: "M***", amount: 47, at: "1h ago" },
+    ],
+  },
+  {
+    id: "L3", title: "Chilled Dairy Selection", supplier: "Emirates Dairy Co",
+    category: "dairy", temperature: "chilled", quantity: 25, unit: "kg",
+    currentPrice: 20, reservePrice: 20, bidCount: 0, buyNow: 70,
+    auctionEnd: Date.now() + 6 * 3600_000, pickupStart: Date.now() + 3 * 3600_000,
+    pickupEnd: Date.now() + 7 * 3600_000, status: "active", urgency: 0.2,
+    allergens: ["dairy"], zone: "Dubai Marina",
+    description: "Assorted yoghurts, labneh, and fresh cheese approaching best-before. Quality intact.",
+    bids: [],
+  },
+  {
+    id: "L4", title: "Prepared Meal Surplus – Catering Leftovers", supplier: "Grand Ballroom Catering",
+    category: "prepared", temperature: "hot", quantity: 80, unit: "units",
+    currentPrice: 120, reservePrice: 80, bidCount: 11, buyNow: 280,
+    auctionEnd: Date.now() + 18 * 60_000, pickupStart: Date.now() + 60 * 60_000,
+    pickupEnd: Date.now() + 3 * 3600_000, status: "anti_snipe", urgency: 0.95,
+    allergens: ["gluten", "dairy", "eggs"], zone: "Dubai Downtown",
+    description: "80 individually packed catered meals: rice dishes, protein portions, salads. Must collect within 3 hours.",
+    bids: [
+      { buyer: "Z***", amount: 120, at: "1 min ago" },
+      { buyer: "T***", amount: 115, at: "3 min ago" },
+      { buyer: "N***", amount: 108, at: "7 min ago" },
+    ],
+  },
+];
+
+const SUPPLIER_LOTS = [
+  { id: "SL1", title: "Morning Bread Surplus", status: "allocated", currentPrice: 45, bidCount: 6, quantity: 30, unit: "kg", auctionEnd: Date.now() - 3600_000 },
+  { id: "SL2", title: "Dry Goods Bundle",      status: "active",    currentPrice: 22, bidCount: 2, quantity: 15, unit: "kg", auctionEnd: Date.now() + 90 * 60_000 },
+  { id: "SL3", title: "Pastry Mix",            status: "expired",   currentPrice: 0,  bidCount: 0, quantity: 8,  unit: "kg", auctionEnd: Date.now() - 7200_000 },
+];
+
+const MY_WINS = [
+  {
+    id: "W1", title: "Vegetable Surplus – 45kg", supplier: "Green Valley Farm",
+    address: "Deira, Plot 14B, Al Ras Street", paymentAmount: 67,
+    donationAmount: 10.05, charityName: "UAE Food Bank",
+    pickupStart: Date.now() - 3600_000, pickupEnd: Date.now() + 1800_000,
+    confirmationCode: "7421", status: "scheduled", pickupStatus: "scheduled",
+  },
+  {
+    id: "W2", title: "Artisan Bread Lot – 22kg", supplier: "Majlis Bakehouse",
+    address: "Downtown Dubai, Financial Centre Road", paymentAmount: 34,
+    donationAmount: 5.10, charityName: "Dar Al Ber Society",
+    pickupStart: Date.now() - 86400_000, pickupEnd: Date.now() - 79200_000,
+    confirmationCode: "3892", status: "completed", pickupStatus: "completed",
+  },
+];
+
+const FRAUD_EVENTS = [
+  {
+    id: "F1", flagType: "fake_bid", severity: 4,
+    description: "Buyer placed 23 bids across 14 lots in 8 minutes — velocity pattern suggests bot activity",
+    user: "omar.test@buyer.com", displayName: "Omar Al Rashid", role: "buyer",
+    createdAt: Date.now() - 25 * 60_000, evidence: { bids_per_min: 2.9, distinct_lots: 14 },
+  },
+  {
+    id: "F2", flagType: "collusion", severity: 3,
+    description: "Two buyer accounts from same /24 subnet placed near-identical bids ($112 vs $113) on lot L4",
+    user: "anon2@buyer.com", displayName: "Anon Buyer 2", role: "buyer",
+    createdAt: Date.now() - 2 * 3600_000, evidence: { subnet: "192.168.1.*", price_delta: "0.88%" },
+  },
+  {
+    id: "F3", flagType: "no_show", severity: 2,
+    description: "Buyer won lot on 3 occasions in last 14 days and failed to collect every time. No-show rate 100%.",
+    user: "ghost@buyer.com", displayName: "Ghost Account", role: "buyer",
+    createdAt: Date.now() - 5 * 3600_000, evidence: { no_shows: 3, wins: 3, rate: "100%" },
+  },
+];
+
+const PENDING_VERIFICATIONS = [
+  {
+    id: "U1", email: "hassan.foods@supplier.ae", displayName: "Hassan Premium Catering",
+    role: "supplier", status: "pending", docType: "trade_license", createdAt: Date.now() - 3600_000,
+  },
+  {
+    id: "U2", email: "sara.buyer@ngo.org", displayName: "Sara Ibrahim (NGO Buyer)",
+    role: "buyer", status: "pending", docType: "org_id", createdAt: Date.now() - 7200_000,
+  },
+  {
+    id: "U3", email: "reem.bakery@supplier.ae", displayName: "Reem's Artisan Bakery",
+    role: "supplier", status: "under_review", docType: "trade_license", createdAt: Date.now() - 28800_000,
+  },
+];
+
+// ─────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────
+
+function fmtCurrency(n) {
+  return `$${parseFloat(n || 0).toFixed(2)}`;
+}
+
+function fmtCountdown(ms) {
+  if (ms <= 0) return "Closed";
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function fmtTime(ts) {
+  return new Date(ts).toLocaleString("en-AE", {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function timeAgo(ms) {
+  const diff = Date.now() - ms;
+  if (diff < 60000) return "just now";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  return `${Math.floor(diff / 3600000)}h ago`;
+}
+
+const TEMP_ICON = { ambient: "🌡️", chilled: "❄️", frozen: "🧊", hot: "🔥" };
+const CAT_COLOR = {
+  bakery: "#92400E", produce: "#166534", dairy: "#1E40AF",
+  prepared: "#6D28D9", meat: "#991B1B", dry: "#374151", beverage: "#0E7490",
+};
+
+// ─────────────────────────────────────────────────────────────
+// SHARED COMPONENTS
+// ─────────────────────────────────────────────────────────────
+
+function Toast({ toasts }) {
+  return (
+    <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{
+          background: t.type === "error" ? "#EF4444" : t.type === "warn" ? "#F59E0B" : "#10B981",
+          color: "#fff", padding: "10px 16px", borderRadius: 8,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 14, fontWeight: 500,
+          maxWidth: 340, animation: "slideIn 0.2s ease",
+        }}>
+          {t.msg}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Badge({ children, color = "#166534", bg = "#DCFCE7" }) {
+  return (
+    <span style={{
+      display: "inline-block", padding: "2px 10px", borderRadius: 99,
+      fontSize: 12, fontWeight: 600, color, background: bg,
+    }}>
+      {children}
+    </span>
+  );
+}
+
+function Btn({ children, onClick, disabled, variant = "primary", style = {} }) {
+  const styles = {
+    primary: { background: "#0F4C2A", color: "#fff" },
+    secondary: { background: "#fff", color: "#374151", border: "1px solid #D1D5DB" },
+    danger: { background: "#EF4444", color: "#fff" },
+    ghost: { background: "transparent", color: "#0F4C2A", border: "1px solid #0F4C2A" },
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: "8px 18px", borderRadius: 8, border: "none",
+        fontWeight: 600, fontSize: 14, cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1, transition: "opacity 0.15s",
+        ...styles[variant], ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Input({ label, type = "text", value, onChange, placeholder, min, step, required, note }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {label && (
+        <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+          {label}{required && <span style={{ color: "#EF4444" }}> *</span>}
+        </label>
+      )}
+      <input
+        type={type} value={value} onChange={e => onChange(e.target.value)}
+        placeholder={placeholder} min={min} step={step}
+        style={{
+          width: "100%", padding: "8px 12px", borderRadius: 8,
+          border: "1.5px solid #D1D5DB", fontSize: 14, outline: "none",
+          boxSizing: "border-box", background: "#fff", transition: "border-color 0.15s",
+        }}
+        onFocus={e => e.target.style.borderColor = "#0F4C2A"}
+        onBlur={e => e.target.style.borderColor = "#D1D5DB"}
+      />
+      {note && <p style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>{note}</p>}
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {label && <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{label}</label>}
+      <select
+        value={value} onChange={e => onChange(e.target.value)}
+        style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 14, background: "#fff", outline: "none" }}
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function Card({ children, style = {} }) {
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB",
+      padding: 20, ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function KpiCard({ label, value, sub, accent = "#0F4C2A" }) {
+  return (
+    <Card>
+      <p style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</p>
+      <p style={{ fontSize: 32, fontWeight: 800, color: accent, margin: "4px 0 2px" }}>{value}</p>
+      {sub && <p style={{ fontSize: 12, color: "#6B7280" }}>{sub}</p>}
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// LAYOUT
+// ─────────────────────────────────────────────────────────────
+
+function Sidebar({ user, page, navigate, logout }) {
+  const links = {
+    buyer: [
+      { id: "browse",  label: "Live Auctions",  icon: "🔍" },
+      { id: "my-wins", label: "My Wins",         icon: "🏆" },
+    ],
+    supplier: [
+      { id: "supplier-dash",  label: "Dashboard",       icon: "📊" },
+      { id: "add-inventory",  label: "Add Inventory",    icon: "📦" },
+      { id: "create-lot",     label: "Create Lot",       icon: "🏷️" },
+    ],
+    admin: [
+      { id: "admin-dash",     label: "Dashboard",        icon: "📊" },
+      { id: "verifications",  label: "Verifications",    icon: "✅" },
+      { id: "fraud-queue",    label: "Fraud Queue",      icon: "🚨" },
+    ],
+  };
+
+  const roleLinks = links[user?.role] ?? [];
+
+  return (
+    <aside style={{
+      width: 220, minHeight: "100vh", background: "#0F4C2A",
+      display: "flex", flexDirection: "column", padding: "20px 12px",
+      flexShrink: 0,
+    }}>
+      {/* Logo */}
+      <div style={{ padding: "0 8px 24px", borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+        <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: "-0.5px" }}>🥦 FoodRescue</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>Surplus platform</div>
+      </div>
+
+      {/* Nav */}
+      <nav style={{ flex: 1, paddingTop: 16, display: "flex", flexDirection: "column", gap: 4 }}>
+        {roleLinks.map(l => {
+          const active = page === l.id || (l.id === "browse" && page === "auction-room");
+          return (
+            <button key={l.id} onClick={() => navigate(l.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "9px 12px", borderRadius: 8, border: "none",
+                background: active ? "rgba(255,255,255,0.15)" : "transparent",
+                color: active ? "#fff" : "rgba(255,255,255,0.65)",
+                fontWeight: active ? 700 : 500, fontSize: 14,
+                cursor: "pointer", textAlign: "left", transition: "all 0.15s",
+              }}
+            >
+              <span>{l.icon}</span>{l.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* User footer */}
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.12)", paddingTop: 14, marginTop: 16 }}>
+        <div style={{ padding: "0 8px" }}>
+          <p style={{ fontSize: 13, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {user?.name}
+          </p>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginTop: 2, textTransform: "capitalize" }}>{user?.role}</p>
+        </div>
+        <button onClick={logout} style={{
+          marginTop: 10, padding: "6px 12px", borderRadius: 8, border: "none",
+          background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)",
+          fontSize: 13, cursor: "pointer", width: "100%", textAlign: "left",
+        }}>
+          Sign out →
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUTH PAGES
+// ─────────────────────────────────────────────────────────────
+
+function Login({ onLogin }) {
+  const [email, setEmail]       = useState("buyer@demo.com");
+  const [password, setPassword] = useState("demo1234");
+  const [loading, setLoading]   = useState(false);
+  const [role, setRole]         = useState("buyer");
+
+  const handle = () => {
+    setLoading(true);
+    setTimeout(() => {
+      const names = { buyer: "Fatima Al Zaabi", supplier: "Hassan Bakery", admin: "Platform Admin" };
+      onLogin({ email, role, name: names[role] });
+      setLoading(false);
+    }, 800);
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+      background: "linear-gradient(135deg, #0F4C2A 0%, #166534 50%, #14532D 100%)",
+    }}>
+      <div style={{ width: 400 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 56 }}>🥦</div>
+          <h1 style={{ fontSize: 28, fontWeight: 800, color: "#fff", margin: "8px 0 4px" }}>FoodRescue</h1>
+          <p style={{ color: "rgba(255,255,255,0.65)", fontSize: 14 }}>Reducing food waste, one auction at a time</p>
+        </div>
+
+        <Card>
+          <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20, color: "#0F4C2A" }}>Sign in</h2>
+
+          {/* Role switcher (demo convenience) */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            {["buyer","supplier","admin"].map(r => (
+              <button key={r} onClick={() => {
+                setRole(r);
+                setEmail(`${r}@demo.com`);
+              }}
+                style={{
+                  flex: 1, padding: "7px 0", borderRadius: 8,
+                  border: `2px solid ${role === r ? "#0F4C2A" : "#E5E7EB"}`,
+                  background: role === r ? "#0F4C2A" : "#fff",
+                  color: role === r ? "#fff" : "#374151",
+                  fontSize: 13, fontWeight: 600, cursor: "pointer", textTransform: "capitalize",
+                }}
+              >{r}</button>
+            ))}
+          </div>
+
+          <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="you@company.com" />
+          <Input label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
+
+          <Btn onClick={handle} disabled={loading} style={{ width: "100%", padding: "11px", fontSize: 15, marginTop: 4 }}>
+            {loading ? "Signing in..." : "Sign in"}
+          </Btn>
+
+          <p style={{ textAlign: "center", fontSize: 13, color: "#9CA3AF", marginTop: 14 }}>
+            No account? <button onClick={() => {}} style={{ color: "#0F4C2A", fontWeight: 600, background: "none", border: "none", cursor: "pointer" }}>Register →</button>
+          </p>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// BUYER: BROWSE LOTS
+// ─────────────────────────────────────────────────────────────
+
+function BrowseLots({ navigate, toast }) {
+  const [lots, setLots]           = useState(INITIAL_LOTS);
+  const [filter, setFilter]       = useState("all");
+  const [search, setSearch]       = useState("");
+
+  // Live countdown ticks
+  useEffect(() => {
+    const id = setInterval(() => setLots(prev => [...prev]), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const filtered = lots.filter(l => {
+    if (filter !== "all" && l.category !== filter) return false;
+    if (search && !l.title.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div style={{ padding: 28, maxWidth: 960, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: "#0F4C2A", margin: 0 }}>Live Auctions</h1>
+          <p style={{ color: "#6B7280", fontSize: 14, marginTop: 2 }}>{filtered.length} lots active now</p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search lots…"
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 14, outline: "none", width: 180 }}
+          />
+          <select value={filter} onChange={e => setFilter(e.target.value)}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 14, background: "#fff" }}>
+            <option value="all">All categories</option>
+            {["bakery","produce","dairy","prepared","meat","dry","beverage"].map(c => (
+              <option key={c} value={c} style={{ textTransform: "capitalize" }}>{c}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+        {filtered.map(lot => {
+          const msLeft  = lot.auctionEnd - Date.now();
+          const urgent  = msLeft < 30 * 60_000;
+          const expired = msLeft <= 0;
+          const isSnipe = lot.status === "anti_snipe";
+
+          return (
+            <div key={lot.id} onClick={() => navigate("auction-room", { lot })}
+              style={{
+                background: "#fff", borderRadius: 12,
+                border: `2px solid ${isSnipe ? "#F59E0B" : urgent ? "#FCA5A5" : "#E5E7EB"}`,
+                padding: 18, cursor: "pointer",
+                transition: "transform 0.15s, box-shadow 0.15s",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 20px rgba(0,0,0,0.1)"; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.06)"; }}
+            >
+              {/* Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 15, fontWeight: 700, color: "#111827", margin: 0, lineHeight: 1.3 }}>{lot.title}</p>
+                  <p style={{ fontSize: 12, color: "#9CA3AF", marginTop: 3 }}>{lot.supplier}</p>
+                </div>
+                <span style={{
+                  marginLeft: 8, flexShrink: 0, padding: "3px 9px", borderRadius: 99,
+                  fontSize: 11, fontWeight: 700,
+                  background: CAT_COLOR[lot.category] + "18",
+                  color: CAT_COLOR[lot.category], textTransform: "capitalize",
+                }}>
+                  {lot.category}
+                </span>
+              </div>
+
+              {/* Meta */}
+              <div style={{ display: "flex", gap: 12, fontSize: 12, color: "#6B7280", marginBottom: 14 }}>
+                <span>{TEMP_ICON[lot.temperature]} {lot.temperature}</span>
+                <span>·</span>
+                <span>{lot.quantity} {lot.unit}</span>
+                {lot.allergens.length > 0 && <><span>·</span><span style={{ color: "#D97706" }}>⚠ allergens</span></>}
+              </div>
+
+              {/* Price row */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                <div>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 2px" }}>Current bid</p>
+                  <p style={{ fontSize: 22, fontWeight: 800, color: "#0F4C2A", margin: 0 }}>
+                    {lot.bidCount > 0 ? fmtCurrency(lot.currentPrice) : <span style={{ color: "#9CA3AF", fontSize: 14 }}>No bids yet</span>}
+                  </p>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>{lot.bidCount} bid{lot.bidCount !== 1 ? "s" : ""}</p>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <p style={{
+                    fontSize: 12, fontWeight: 700,
+                    color: isSnipe ? "#F59E0B" : urgent ? "#EF4444" : "#10B981",
+                    margin: "0 0 3px",
+                  }}>
+                    {isSnipe ? "⚡ Extended" : urgent ? "🔴 Ending soon" : "🟢 Live"}
+                  </p>
+                  <p style={{
+                    fontSize: 14, fontWeight: 800, fontFamily: "monospace",
+                    color: isSnipe ? "#F59E0B" : urgent ? "#EF4444" : "#374151",
+                  }}>
+                    {expired ? "Closed" : fmtCountdown(msLeft)}
+                  </p>
+                </div>
+              </div>
+
+              {lot.buyNow && (
+                <p style={{ marginTop: 10, fontSize: 12, color: "#2563EB", fontWeight: 600 }}>
+                  Buy now: {fmtCurrency(lot.buyNow)}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// BUYER: AUCTION ROOM (live simulation)
+// ─────────────────────────────────────────────────────────────
+
+function AuctionRoom({ params, navigate, toast }) {
+  const [lot, setLot]         = useState({ ...params.lot });
+  const [bidAmount, setBid]   = useState(String((params.lot.currentPrice + 5).toFixed(2)));
+  const [charity, setCharity] = useState(CHARITIES[0].id);
+  const [msLeft, setMsLeft]   = useState(params.lot.auctionEnd - Date.now());
+  const [placing, setPlacing] = useState(false);
+  const [antiSnipe, setAntiSnipe] = useState(lot.status === "anti_snipe");
+  const [bidStream, setBidStream] = useState(lot.bids || []);
+
+  // Countdown
+  useEffect(() => {
+    const id = setInterval(() => {
+      const left = lot.auctionEnd - Date.now();
+      setMsLeft(Math.max(0, left));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [lot.auctionEnd]);
+
+  // Simulate live bids from other buyers every 12-25 seconds
+  useEffect(() => {
+    const names = ["K***", "S***", "R***", "N***", "Z***", "A***", "M***"];
+    const simulate = () => {
+      const randomBuyer = names[Math.floor(Math.random() * names.length)];
+      const newAmount = lot.currentPrice + Math.floor(Math.random() * 8 + 2);
+      const newBid = { buyer: randomBuyer, amount: newAmount, at: "just now" };
+      setLot(prev => ({ ...prev, currentPrice: newAmount, bidCount: prev.bidCount + 1 }));
+      setBidStream(prev => [newBid, ...prev.slice(0, 8)]);
+      setBid(String((newAmount + 5).toFixed(2)));
+      toast(`${randomBuyer} just bid ${fmtCurrency(newAmount)}`, "warn");
+    };
+    const delay = 12000 + Math.random() * 13000;
+    const id = setTimeout(simulate, delay);
+    return () => clearTimeout(id);
+  }, [lot.currentPrice]);
+
+  const minBid  = lot.currentPrice + 1;
+  const amount  = parseFloat(bidAmount) || 0;
+  const donation = amount * 0.15;
+  const charityName = CHARITIES.find(c => c.id === charity)?.name;
+
+  const placeBid = () => {
+    if (amount < minBid) { toast(`Minimum bid is ${fmtCurrency(minBid)}`, "error"); return; }
+    setPlacing(true);
+    setTimeout(() => {
+      const wasUrgent = msLeft < 120_000;
+      if (wasUrgent && !antiSnipe) {
+        setAntiSnipe(true);
+        setLot(prev => ({ ...prev, auctionEnd: prev.auctionEnd + 120_000, status: "anti_snipe" }));
+        toast("⚡ Anti-snipe triggered — auction extended 2 minutes!");
+      }
+      const myBid = { buyer: "You", amount, at: "just now" };
+      setLot(prev => ({ ...prev, currentPrice: amount, bidCount: prev.bidCount + 1 }));
+      setBidStream(prev => [myBid, ...prev.slice(0, 8)]);
+      setBid(String((amount + 5).toFixed(2)));
+      setPlacing(false);
+      toast(`Bid of ${fmtCurrency(amount)} placed! Funds held by Stripe.`);
+    }, 900);
+  };
+
+  const buyNow = () => {
+    toast(`Lot purchased for ${fmtCurrency(lot.buyNow)}! Pickup details sent.`);
+    setTimeout(() => navigate("my-wins"), 2000);
+  };
+
+  const isActive = msLeft > 0;
+
+  return (
+    <div style={{ padding: 28, maxWidth: 960, margin: "0 auto" }}>
+      <button onClick={() => navigate("browse")} style={{ background: "none", border: "none", color: "#0F4C2A", cursor: "pointer", fontWeight: 600, fontSize: 14, marginBottom: 16 }}>
+        ← Back to auctions
+      </button>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
+
+        {/* Left: lot details */}
+        <div>
+          <Card style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+              <div>
+                <h1 style={{ fontSize: 22, fontWeight: 800, color: "#111827", margin: "0 0 4px" }}>{lot.title}</h1>
+                <p style={{ color: "#9CA3AF", fontSize: 14, margin: 0 }}>{lot.supplier} · {lot.zone}</p>
+              </div>
+              {antiSnipe
+                ? <Badge color="#92400E" bg="#FEF3C7">⚡ Extended</Badge>
+                : isActive
+                  ? <Badge color="#065F46" bg="#D1FAE5">🟢 Live</Badge>
+                  : <Badge color="#374151" bg="#F3F4F6">Closed</Badge>
+              }
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              {[
+                ["Quantity",    `${lot.quantity} ${lot.unit}`],
+                ["Temperature", `${TEMP_ICON[lot.temperature]} ${lot.temperature}`],
+                ["Pickup from", fmtTime(lot.pickupStart)],
+                ["Pickup until",fmtTime(lot.pickupEnd)],
+                ["Allergens",   lot.allergens.length ? lot.allergens.join(", ") : "None listed"],
+                ["Zone",        lot.zone],
+              ].map(([k, v]) => (
+                <div key={k} style={{ background: "#F9FAFB", borderRadius: 8, padding: "10px 12px" }}>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 3px", fontWeight: 600, textTransform: "uppercase" }}>{k}</p>
+                  <p style={{ fontSize: 14, color: "#111827", margin: 0, fontWeight: 500, textTransform: "capitalize" }}>{v}</p>
+                </div>
+              ))}
+            </div>
+
+            {lot.description && <p style={{ fontSize: 14, color: "#6B7280", lineHeight: 1.6, margin: 0 }}>{lot.description}</p>}
+          </Card>
+
+          {/* Bid stream */}
+          <Card>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: "#111827", marginTop: 0, marginBottom: 14 }}>Live bid activity</h3>
+            {bidStream.length === 0
+              ? <p style={{ color: "#9CA3AF", fontSize: 14 }}>No bids yet. Be the first!</p>
+              : bidStream.map((b, i) => (
+                  <div key={i} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "8px 0", borderBottom: i < bidStream.length - 1 ? "1px solid #F3F4F6" : "none",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{
+                        width: 30, height: 30, borderRadius: "50%",
+                        background: b.buyer === "You" ? "#0F4C2A" : "#E5E7EB",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 13, fontWeight: 700,
+                        color: b.buyer === "You" ? "#fff" : "#374151",
+                      }}>
+                        {b.buyer[0]}
+                      </div>
+                      <span style={{ fontSize: 14, color: "#374151" }}>
+                        {b.buyer === "You" ? <strong>You</strong> : b.buyer}
+                      </span>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p style={{ fontSize: 16, fontWeight: 700, color: "#0F4C2A", margin: "0 0 1px" }}>{fmtCurrency(b.amount)}</p>
+                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{b.at}</p>
+                    </div>
+                  </div>
+                ))
+            }
+          </Card>
+        </div>
+
+        {/* Right: bidding panel */}
+        <div>
+          {/* Countdown */}
+          <div style={{
+            background: antiSnipe ? "#FFFBEB" : isActive ? "#F0FDF4" : "#F9FAFB",
+            border: `2px solid ${antiSnipe ? "#F59E0B" : isActive ? "#86EFAC" : "#E5E7EB"}`,
+            borderRadius: 12, padding: 16, textAlign: "center", marginBottom: 16,
+          }}>
+            <p style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF", textTransform: "uppercase", margin: "0 0 6px" }}>
+              {antiSnipe ? "Extended — time remaining" : "Time remaining"}
+            </p>
+            <p style={{
+              fontSize: 40, fontWeight: 900, fontFamily: "monospace", margin: "0 0 4px",
+              color: antiSnipe ? "#D97706" : msLeft < 120_000 ? "#EF4444" : "#0F4C2A",
+            }}>
+              {fmtCountdown(msLeft)}
+            </p>
+            {antiSnipe && <p style={{ fontSize: 12, color: "#D97706", margin: 0 }}>⚡ Auction extended due to last-minute bid</p>}
+          </div>
+
+          {/* Current price */}
+          <Card style={{ marginBottom: 16, textAlign: "center" }}>
+            <p style={{ fontSize: 11, color: "#9CA3AF", textTransform: "uppercase", fontWeight: 600, margin: "0 0 6px" }}>Current price</p>
+            <p style={{ fontSize: 36, fontWeight: 900, color: "#0F4C2A", margin: "0 0 4px" }}>{fmtCurrency(lot.currentPrice)}</p>
+            <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>{lot.bidCount} bid{lot.bidCount !== 1 ? "s" : ""} · reserve {fmtCurrency(lot.reservePrice)}</p>
+          </Card>
+
+          {isActive ? (
+            <Card>
+              {/* Bid amount */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                  Your bid (USD)
+                </label>
+                <input
+                  type="number" value={bidAmount} min={minBid} step="0.5"
+                  onChange={e => setBid(e.target.value)}
+                  style={{
+                    width: "100%", padding: "10px 12px", borderRadius: 8,
+                    border: "2px solid #0F4C2A", fontSize: 22, fontWeight: 800,
+                    color: "#0F4C2A", outline: "none", boxSizing: "border-box", textAlign: "center",
+                  }}
+                />
+                <p style={{ fontSize: 12, color: "#9CA3AF", marginTop: 4 }}>
+                  Minimum: {fmtCurrency(minBid)}
+                </p>
+              </div>
+
+              {/* Charity */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                  Donate 15% to
+                </label>
+                <select value={charity} onChange={e => setCharity(e.target.value)}
+                  style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 14, background: "#fff", outline: "none" }}>
+                  {CHARITIES.map(c => <option key={c.id} value={c.id}>{c.logo} {c.name}</option>)}
+                </select>
+              </div>
+
+              {/* Donation preview */}
+              {amount >= minBid && (
+                <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, padding: "10px 12px", marginBottom: 14 }}>
+                  <p style={{ fontSize: 13, color: "#065F46", margin: 0 }}>
+                    🤝 <strong>{fmtCurrency(donation)}</strong> will go to {charityName}
+                  </p>
+                  <p style={{ fontSize: 12, color: "#6B7280", margin: "2px 0 0" }}>
+                    {fmtCurrency(amount * 0.77)} to supplier · {fmtCurrency(amount * 0.08)} platform fee
+                  </p>
+                </div>
+              )}
+
+              <Btn onClick={placeBid} disabled={placing || amount < minBid}
+                style={{ width: "100%", padding: 12, fontSize: 16 }}>
+                {placing ? "Placing bid…" : `Bid ${fmtCurrency(amount)}`}
+              </Btn>
+
+              {lot.buyNow && (
+                <Btn onClick={buyNow} variant="ghost" style={{ width: "100%", padding: 10, marginTop: 8, fontSize: 14 }}>
+                  Buy now for {fmtCurrency(lot.buyNow)}
+                </Btn>
+              )}
+
+              <p style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center", marginTop: 12 }}>
+                Card is held, not charged until you win. Auto-released if outbid.
+              </p>
+            </Card>
+          ) : (
+            <Card style={{ textAlign: "center" }}>
+              <p style={{ fontSize: 16, color: "#9CA3AF" }}>⛔ Auction has closed</p>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// BUYER: MY WINS
+// ─────────────────────────────────────────────────────────────
+
+function MyWins({ toast }) {
+  const [wins, setWins] = useState(MY_WINS);
+  const [codes, setCodes] = useState({});
+
+  const confirm = (id, code) => {
+    const win = wins.find(w => w.id === id);
+    if (code !== win.confirmationCode) { toast("Wrong code. Try again.", "error"); return; }
+    setWins(prev => prev.map(w => w.id === id ? { ...w, pickupStatus: "completed" } : w));
+    toast("Pickup confirmed! Donation receipt sent to your email.");
+  };
+
+  const totalDonated = wins.reduce((s, w) => s + w.donationAmount, 0);
+  const completed    = wins.filter(w => w.pickupStatus === "completed").length;
+
+  return (
+    <div style={{ padding: 28, maxWidth: 720, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 24, fontWeight: 800, color: "#0F4C2A", marginBottom: 6 }}>My Wins</h1>
+
+      {/* Impact row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 24 }}>
+        <KpiCard label="Auctions won"     value={wins.length}        accent="#0F4C2A" />
+        <KpiCard label="Pickups done"     value={completed}          accent="#2563EB" />
+        <KpiCard label="Total donated"    value={fmtCurrency(totalDonated)} accent="#7C3AED" />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {wins.map(win => {
+          const done = win.pickupStatus === "completed";
+          const msLeft = win.pickupEnd - Date.now();
+          return (
+            <Card key={win.id} style={{ borderLeft: `4px solid ${done ? "#10B981" : "#F59E0B"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <p style={{ fontSize: 16, fontWeight: 700, margin: "0 0 3px" }}>{win.title}</p>
+                  <p style={{ fontSize: 13, color: "#9CA3AF", margin: 0 }}>{win.supplier}</p>
+                </div>
+                <Badge
+                  color={done ? "#065F46" : "#92400E"}
+                  bg={done ? "#D1FAE5" : "#FEF3C7"}
+                >
+                  {done ? "✅ Complete" : "⏳ Pending pickup"}
+                </Badge>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13, color: "#6B7280", marginBottom: 14 }}>
+                <p style={{ margin: 0 }}>📍 {win.address}</p>
+                <p style={{ margin: 0 }}>💰 Paid: {fmtCurrency(win.paymentAmount)}</p>
+                <p style={{ margin: 0, color: "#059669" }}>🤝 {fmtCurrency(win.donationAmount)} → {win.charityName}</p>
+                {!done && <p style={{ margin: 0, color: msLeft < 0 ? "#EF4444" : "#374151" }}>
+                  🕐 {msLeft < 0 ? "Window passed" : `${fmtCountdown(msLeft)} left to collect`}
+                </p>}
+              </div>
+
+              {!done && (
+                <div style={{ borderTop: "1px solid #F3F4F6", paddingTop: 14 }}>
+                  <p style={{ fontSize: 12, color: "#9CA3AF", marginBottom: 8 }}>
+                    Enter the 4-digit code the supplier gives you when you collect
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      type="text" maxLength={4} placeholder="0000"
+                      value={codes[win.id] || ""}
+                      onChange={e => setCodes(prev => ({ ...prev, [win.id]: e.target.value.replace(/\D/g, "") }))}
+                      style={{
+                        width: 80, padding: "8px 12px", borderRadius: 8,
+                        border: "1.5px solid #D1D5DB", fontSize: 20, fontWeight: 700,
+                        textAlign: "center", fontFamily: "monospace", outline: "none",
+                      }}
+                    />
+                    <Btn
+                      onClick={() => confirm(win.id, codes[win.id])}
+                      disabled={(codes[win.id] || "").length !== 4}
+                    >
+                      Confirm pickup
+                    </Btn>
+                  </div>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", marginTop: 8 }}>
+                    💡 Demo: code is <strong>{win.confirmationCode}</strong>
+                  </p>
+                </div>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// SUPPLIER: DASHBOARD
+// ─────────────────────────────────────────────────────────────
+
+function SupplierDashboard({ navigate }) {
+  const STATUS = {
+    active:    { label: "🟢 Live",      color: "#065F46", bg: "#D1FAE5" },
+    allocated: { label: "✅ Allocated", color: "#1E40AF", bg: "#DBEAFE" },
+    expired:   { label: "⏰ Expired",   color: "#991B1B", bg: "#FEE2E2" },
+    anti_snipe:{ label: "⚡ Extended",  color: "#92400E", bg: "#FEF3C7" },
+  };
+
+  return (
+    <div style={{ padding: 28, maxWidth: 900, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: "#0F4C2A", margin: 0 }}>Supplier Dashboard</h1>
+          <p style={{ color: "#6B7280", fontSize: 14, marginTop: 2 }}>Hassan Bakery · Verified ✅</p>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="secondary" onClick={() => navigate("add-inventory")}>+ Add Inventory</Btn>
+          <Btn onClick={() => navigate("create-lot")}>+ Create Lot</Btn>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 24 }}>
+        <KpiCard label="Active auctions" value={SUPPLIER_LOTS.filter(l => l.status === "active").length} accent="#0F4C2A" />
+        <KpiCard label="Lots this month"  value={SUPPLIER_LOTS.length} accent="#7C3AED" sub="since Jun 1" />
+        <KpiCard label="Revenue earned"   value="$284" accent="#B45309" sub="last 30 days" />
+      </div>
+
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid #F3F4F6", fontWeight: 700, color: "#374151" }}>
+          Your lots
+        </div>
+        {SUPPLIER_LOTS.map((lot, i) => {
+          const s = STATUS[lot.status] || STATUS.expired;
+          return (
+            <div key={lot.id} style={{
+              display: "flex", alignItems: "center", padding: "14px 20px",
+              borderBottom: i < SUPPLIER_LOTS.length - 1 ? "1px solid #F9FAFB" : "none",
+            }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 600, margin: "0 0 3px" }}>{lot.title}</p>
+                <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
+                  {lot.quantity} {lot.unit} · {lot.status === "active" ? `Ends ${fmtTime(lot.auctionEnd)}` : "Closed"}
+                </p>
+              </div>
+              <div style={{ textAlign: "right", marginRight: 20 }}>
+                <p style={{ fontWeight: 700, fontSize: 16, margin: "0 0 2px", color: "#0F4C2A" }}>{fmtCurrency(lot.currentPrice)}</p>
+                <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>{lot.bidCount} bids</p>
+              </div>
+              <Badge color={s.color} bg={s.bg}>{s.label}</Badge>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// SUPPLIER: ADD INVENTORY (with ML prediction)
+// ─────────────────────────────────────────────────────────────
+
+function AddInventory({ navigate, toast }) {
+  const [form, setForm] = useState({
+    name: "", category: "bakery", quantity: "", unit: "kg",
+    expiry: "", pickupStart: "", pickupEnd: "",
+    temperature: "ambient", allergens: [],
+  });
+  const [prediction, setPrediction] = useState(null);
+  const [loading, setLoading]       = useState(false);
+  const [saved, setSaved]           = useState(false);
+
+  const SURPLUS = { bakery: 0.30, produce: 0.20, dairy: 0.15, prepared: 0.25, meat: 0.10, dry: 0.05 };
+  const PRICE   = { bakery: 3.2,  produce: 2.5,  dairy: 4.0,  prepared: 5.5, meat: 8.0,  dry: 2.0 };
+
+  const predict = () => {
+    if (!form.name || !form.quantity) { toast("Fill in name and quantity first", "error"); return; }
+    setLoading(true);
+    setTimeout(() => {
+      const qty   = parseFloat(form.quantity) || 0;
+      const pct   = SURPLUS[form.category] || 0.2;
+      const surplusQty = qty * pct;
+      const value = surplusQty * (PRICE[form.category] || 3);
+      setPrediction({
+        surplusQty:  surplusQty.toFixed(1),
+        surplusPct:  (pct * 100).toFixed(0),
+        confidence:  Math.floor(55 + Math.random() * 30),
+        estValue:    value.toFixed(2),
+        valueLow:    (value * 0.5).toFixed(2),
+        valueHigh:   (value * 1.8).toFixed(2),
+      });
+      setLoading(false);
+      toast("ML prediction complete — see results below.");
+    }, 1800);
+  };
+
+  const save = () => {
+    setSaved(true);
+    toast("Inventory saved. Create a lot when you're ready.");
+  };
+
+  const f = (k) => (v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  return (
+    <div style={{ padding: 28, maxWidth: 640, margin: "0 auto" }}>
+      <button onClick={() => navigate("supplier-dash")} style={{ background: "none", border: "none", color: "#0F4C2A", cursor: "pointer", fontWeight: 600, fontSize: 14, marginBottom: 16 }}>
+        ← Back
+      </button>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0F4C2A", marginBottom: 6 }}>Add today's inventory</h1>
+      <p style={{ color: "#9CA3AF", fontSize: 14, marginBottom: 24 }}>Enter what you have on hand. Our ML model predicts your surplus before you list.</p>
+
+      <Card>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Input label="Item name" value={form.name} onChange={f("name")} placeholder="e.g. Sourdough loaves" required />
+          </div>
+          <Select label="Category" value={form.category} onChange={f("category")}
+            options={["bakery","produce","dairy","prepared","meat","dry","beverage"].map(c => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) }))}
+          />
+          <Select label="Temperature" value={form.temperature} onChange={f("temperature")}
+            options={[["ambient","Ambient 🌡️"],["chilled","Chilled ❄️"],["frozen","Frozen 🧊"],["hot","Hot 🔥"]].map(([v,l]) => ({ value: v, label: l }))}
+          />
+          <Input label="Total quantity" type="number" value={form.quantity} onChange={f("quantity")} placeholder="0" />
+          <Select label="Unit" value={form.unit} onChange={f("unit")}
+            options={["kg","units","liters","packs"].map(u => ({ value: u, label: u }))}
+          />
+          <div style={{ gridColumn: "1 / -1" }}>
+            <Input label="Best-before / expiry" type="datetime-local" value={form.expiry} onChange={f("expiry")} />
+          </div>
+          <Input label="Pickup from" type="datetime-local" value={form.pickupStart} onChange={f("pickupStart")} />
+          <Input label="Pickup until" type="datetime-local" value={form.pickupEnd}   onChange={f("pickupEnd")} />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <Btn onClick={predict} disabled={loading} variant="ghost" style={{ flex: 1 }}>
+            {loading ? "Running ML model…" : "Get surplus prediction"}
+          </Btn>
+          <Btn onClick={save} disabled={saved} style={{ flex: 1 }}>
+            {saved ? "Saved ✓" : "Save inventory"}
+          </Btn>
+        </div>
+      </Card>
+
+      {/* ML Prediction result */}
+      {prediction && (
+        <Card style={{ marginTop: 16, border: "2px solid #86EFAC", background: "#F0FDF4" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ margin: 0, color: "#0F4C2A", fontWeight: 800 }}>📊 ML Surplus Prediction</h3>
+            <Badge color="#065F46" bg="#D1FAE5">{prediction.confidence}% confidence</Badge>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+            {[
+              ["Predicted surplus",    `~${prediction.surplusQty} ${form.unit}`, "#0F4C2A"],
+              ["As % of stock",        `${prediction.surplusPct}%`,             "#7C3AED"],
+              ["Est. auction value",   `$${prediction.estValue}`,               "#B45309"],
+            ].map(([k, v, accent]) => (
+              <div key={k} style={{ background: "#fff", borderRadius: 8, padding: "10px 12px", border: "1px solid #D1FAE5" }}>
+                <p style={{ fontSize: 11, color: "#6B7280", margin: "0 0 4px", fontWeight: 600 }}>{k}</p>
+                <p style={{ fontSize: 20, fontWeight: 800, color: accent, margin: 0 }}>{v}</p>
+              </div>
+            ))}
+          </div>
+
+          <p style={{ fontSize: 13, color: "#065F46", marginTop: 14, marginBottom: 0 }}>
+            💡 Value range: ${prediction.valueLow} – ${prediction.valueHigh} · Based on category history and current zone demand.
+          </p>
+
+          <Btn onClick={() => navigate("create-lot")} style={{ width: "100%", marginTop: 14 }}>
+            Create a lot with this inventory →
+          </Btn>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// SUPPLIER: CREATE LOT
+// ─────────────────────────────────────────────────────────────
+
+function CreateLot({ navigate, toast }) {
+  const [form, setForm] = useState({
+    title: "", description: "", categories: ["bakery"],
+    quantity: "", unit: "kg", temperature: "ambient",
+    reserve: "", buyNow: "", increment: "1",
+    auctionStart: "", auctionEnd: "",
+    pickupStart: "", pickupEnd: "", expiry: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const f = (k) => (v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const submit = () => {
+    if (!form.title || !form.quantity || !form.reserve) {
+      toast("Fill in title, quantity, and reserve price.", "error"); return;
+    }
+    setSaving(true);
+    setTimeout(() => {
+      setSaving(false);
+      toast("Lot created and live! ML suggested reserve confirmed.");
+      navigate("supplier-dash");
+    }, 1200);
+  };
+
+  return (
+    <div style={{ padding: 28, maxWidth: 640, margin: "0 auto" }}>
+      <button onClick={() => navigate("supplier-dash")} style={{ background: "none", border: "none", color: "#0F4C2A", cursor: "pointer", fontWeight: 600, fontSize: 14, marginBottom: 16 }}>
+        ← Back
+      </button>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: "#0F4C2A", marginBottom: 6 }}>Create auction lot</h1>
+      <p style={{ color: "#9CA3AF", fontSize: 14, marginBottom: 24 }}>Set your terms. ML price guidance updates on submit.</p>
+
+      <Card>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Input label="Lot title" value={form.title} onChange={f("title")} placeholder="e.g. Mixed Bakery Surplus – Day-old sourdough & pastries" required />
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>Description</label>
+          <textarea
+            value={form.description} onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))}
+            placeholder="Buyer-facing description. Include quality notes and what's in the lot."
+            rows={3} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 14, resize: "vertical", outline: "none", boxSizing: "border-box" }}
+          />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+          <Input label="Quantity" type="number" value={form.quantity} onChange={f("quantity")} placeholder="50" required />
+          <Select label="Unit" value={form.unit} onChange={f("unit")}
+            options={["kg","units","liters","packs"].map(u => ({ value: u, label: u }))}
+          />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Select label="Temperature" value={form.temperature} onChange={f("temperature")}
+            options={[["ambient","🌡️ Ambient"],["chilled","❄️ Chilled"],["frozen","🧊 Frozen"],["hot","🔥 Hot"]].map(([v,l]) => ({ value: v, label: l }))}
+          />
+          <Input label="Min bid increment ($)" type="number" value={form.increment} onChange={f("increment")} step="0.5" />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Input label="Reserve price ($)" type="number" value={form.reserve} onChange={f("reserve")} placeholder="20.00" required />
+          <Input label="Buy-now price ($)" type="number" value={form.buyNow} onChange={f("buyNow")} placeholder="optional" />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Input label="Auction start" type="datetime-local" value={form.auctionStart} onChange={f("auctionStart")} />
+          <Input label="Auction end"   type="datetime-local" value={form.auctionEnd}   onChange={f("auctionEnd")} />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Input label="Pickup from" type="datetime-local" value={form.pickupStart} onChange={f("pickupStart")} />
+          <Input label="Pickup until" type="datetime-local" value={form.pickupEnd} onChange={f("pickupEnd")} />
+        </div>
+
+        <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13, color: "#065F46" }}>
+          💡 After you create this lot, ML will suggest a predicted clearing price based on zone history, urgency, and buyer demand. Your reserve is protected regardless.
+        </div>
+
+        <Btn onClick={submit} disabled={saving} style={{ width: "100%", padding: 12, fontSize: 16 }}>
+          {saving ? "Creating lot…" : "Create lot & go live"}
+        </Btn>
+      </Card>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN: DASHBOARD
+// ─────────────────────────────────────────────────────────────
+
+function AdminDashboard({ navigate }) {
+  return (
+    <div style={{ padding: 28, maxWidth: 960, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 24, fontWeight: 800, color: "#0F4C2A", marginBottom: 6 }}>Admin Dashboard</h1>
+      <p style={{ color: "#9CA3AF", fontSize: 14, marginBottom: 24 }}>Last 30 days · All zones</p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
+        <KpiCard label="kg Rescued"       value="4,821 kg"  sub="this month"          accent="#0F4C2A" />
+        <KpiCard label="Donations out"    value="$14,280"   sub="to 4 charities"      accent="#7C3AED" />
+        <KpiCard label="Meals estimated"  value="13,780"    sub="~0.35kg per meal"    accent="#B45309" />
+        <KpiCard label="Fraud queue"      value={FRAUD_EVENTS.length} sub="need review" accent="#EF4444" />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 24 }}>
+        <KpiCard label="Lots created"     value="214"       sub="last 30 days"        accent="#0F4C2A" />
+        <KpiCard label="Clearance rate"   value="71%"       sub="lots allocated"      accent="#059669" />
+        <KpiCard label="No-show rate"     value="9.4%"      sub="target < 15%"        accent="#D97706" />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+        {[
+          { page: "verifications",  icon: "👤", title: "Verify users",  desc: `${PENDING_VERIFICATIONS.length} accounts pending approval` },
+          { page: "fraud-queue",    icon: "🚨", title: "Fraud queue",   desc: `${FRAUD_EVENTS.length} events need review` },
+          { page: "browse",         icon: "📦", title: "View all lots", desc: "Browse, close, or reassign any lot" },
+        ].map(l => (
+          <Card key={l.page} style={{ cursor: "pointer", transition: "border-color 0.15s" }}
+            onClick={() => navigate(l.page)}
+            onMouseEnter={e => e.currentTarget.style.borderColor = "#0F4C2A"}
+            onMouseLeave={e => e.currentTarget.style.borderColor = "#E5E7EB"}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>{l.icon}</div>
+            <p style={{ fontWeight: 700, fontSize: 16, margin: "0 0 4px" }}>{l.title}</p>
+            <p style={{ fontSize: 13, color: "#9CA3AF", margin: 0 }}>{l.desc}</p>
+          </Card>
+        ))}
+      </div>
+
+      {/* Charity totals */}
+      <Card style={{ marginTop: 16 }}>
+        <h3 style={{ fontWeight: 700, margin: "0 0 14px", color: "#374151" }}>Donations by charity (all time)</h3>
+        {CHARITIES.map(c => (
+          <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 20 }}>{c.logo}</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>{c.name}</p>
+              <div style={{ background: "#F3F4F6", borderRadius: 99, height: 6, marginTop: 4, overflow: "hidden" }}>
+                <div style={{ background: "#0F4C2A", height: "100%", width: `${(c.total / 50000 * 100).toFixed(0)}%`, borderRadius: 99 }} />
+              </div>
+            </div>
+            <p style={{ fontSize: 14, fontWeight: 700, color: "#0F4C2A", margin: 0, whiteSpace: "nowrap" }}>{fmtCurrency(c.total)}</p>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN: FRAUD QUEUE
+// ─────────────────────────────────────────────────────────────
+
+function FraudQueue({ toast }) {
+  const [events, setEvents]     = useState(FRAUD_EVENTS);
+  const [resText, setResText]   = useState({});
+  const [open, setOpen]         = useState(null);
+
+  const SEV_COLOR = { 2: "#D97706", 3: "#EA580C", 4: "#DC2626", 5: "#7F1D1D" };
+  const SEV_BG    = { 2: "#FEF3C7", 3: "#FED7AA", 4: "#FEE2E2", 5: "#FECACA" };
+  const FLAG_LABEL = {
+    fake_bid: "🎭 Fake bid", collusion: "🤝 Collusion",
+    no_show: "👻 No-show",  price_manipulation: "💸 Price manipulation",
+  };
+
+  const resolve = (id) => {
+    if (!resText[id]?.trim()) { toast("Enter a resolution note.", "error"); return; }
+    setEvents(prev => prev.filter(e => e.id !== id));
+    toast("Event resolved and logged.");
+    setOpen(null);
+  };
+
+  return (
+    <div style={{ padding: 28, maxWidth: 800, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: "#0F4C2A", margin: 0 }}>Fraud Queue</h1>
+        <Badge color={events.length > 0 ? "#991B1B" : "#065F46"} bg={events.length > 0 ? "#FEE2E2" : "#D1FAE5"}>
+          {events.length} unreviewed
+        </Badge>
+      </div>
+
+      {events.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: 48 }}>
+          <p style={{ fontSize: 40, marginBottom: 8 }}>✅</p>
+          <p style={{ fontWeight: 700, color: "#374151" }}>Queue clear. No events need review.</p>
+        </Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {events.map(ev => (
+            <Card key={ev.id} style={{ borderLeft: `4px solid ${SEV_COLOR[ev.severity] || "#374151"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{
+                      padding: "2px 10px", borderRadius: 99, fontSize: 12, fontWeight: 700,
+                      background: SEV_BG[ev.severity] || "#F3F4F6",
+                      color: SEV_COLOR[ev.severity] || "#374151",
+                    }}>
+                      Severity {ev.severity}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>{FLAG_LABEL[ev.flagType] || ev.flagType}</span>
+                  </div>
+                  <p style={{ fontSize: 14, color: "#374151", margin: "0 0 6px", lineHeight: 1.5 }}>{ev.description}</p>
+                  <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
+                    {ev.displayName} · {ev.user} · {ev.role} · {timeAgo(ev.createdAt)}
+                  </p>
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ fontSize: 12, color: "#9CA3AF", cursor: "pointer" }}>View evidence</summary>
+                    <pre style={{ fontSize: 12, background: "#F9FAFB", borderRadius: 6, padding: 8, marginTop: 6, overflow: "auto" }}>
+                      {JSON.stringify(ev.evidence, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+                <Btn onClick={() => setOpen(open === ev.id ? null : ev.id)} variant="secondary" style={{ marginLeft: 12, flexShrink: 0 }}>
+                  {open === ev.id ? "Cancel" : "Resolve"}
+                </Btn>
+              </div>
+
+              {open === ev.id && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #F3F4F6", display: "flex", gap: 8 }}>
+                  <input
+                    value={resText[ev.id] || ""} onChange={e => setResText(p => ({ ...p, [ev.id]: e.target.value }))}
+                    placeholder="Resolution note (required)…"
+                    style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 14, outline: "none" }}
+                  />
+                  <Btn onClick={() => resolve(ev.id)}>Save</Btn>
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// ADMIN: VERIFICATIONS
+// ─────────────────────────────────────────────────────────────
+
+function Verifications({ toast }) {
+  const [users, setUsers] = useState(PENDING_VERIFICATIONS);
+  const STATUS_COLOR = {
+    pending:      { color: "#92400E", bg: "#FEF3C7" },
+    under_review: { color: "#1E40AF", bg: "#DBEAFE" },
+  };
+
+  const act = (id, action) => {
+    setUsers(prev => prev.filter(u => u.id !== id));
+    toast(`User ${action}d successfully.`);
+  };
+
+  return (
+    <div style={{ padding: 28, maxWidth: 900, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: "#0F4C2A", margin: 0 }}>Pending Verifications</h1>
+        <Badge color="#92400E" bg="#FEF3C7">{users.length} pending</Badge>
+      </div>
+
+      {users.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: 48 }}>
+          <p style={{ fontSize: 40, marginBottom: 8 }}>✅</p>
+          <p style={{ fontWeight: 700, color: "#374151" }}>All caught up. No pending verifications.</p>
+        </Card>
+      ) : (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+            <thead>
+              <tr style={{ background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
+                {["Name & Email","Role","Status","Document","Submitted","Actions"].map(h => (
+                  <th key={h} style={{ padding: "12px 16px", textAlign: "left", fontSize: 12, fontWeight: 700, color: "#6B7280", textTransform: "uppercase" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u, i) => {
+                const sc = STATUS_COLOR[u.status] || STATUS_COLOR.pending;
+                return (
+                  <tr key={u.id} style={{ borderBottom: i < users.length - 1 ? "1px solid #F3F4F6" : "none" }}>
+                    <td style={{ padding: "14px 16px" }}>
+                      <p style={{ fontWeight: 600, margin: "0 0 2px" }}>{u.displayName}</p>
+                      <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>{u.email}</p>
+                    </td>
+                    <td style={{ padding: "14px 16px", textTransform: "capitalize" }}>{u.role}</td>
+                    <td style={{ padding: "14px 16px" }}>
+                      <Badge color={sc.color} bg={sc.bg}>{u.status.replace("_", " ")}</Badge>
+                    </td>
+                    <td style={{ padding: "14px 16px" }}>
+                      <span style={{ fontSize: 12, color: "#2563EB", textDecoration: "underline", cursor: "pointer" }}>
+                        {u.docType.replace("_", " ")} ↗
+                      </span>
+                    </td>
+                    <td style={{ padding: "14px 16px", fontSize: 12, color: "#9CA3AF" }}>{timeAgo(u.createdAt)}</td>
+                    <td style={{ padding: "14px 16px" }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={() => act(u.id, "approve")} style={{
+                          padding: "5px 12px", borderRadius: 6, border: "none", background: "#D1FAE5",
+                          color: "#065F46", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        }}>Approve</button>
+                        <button onClick={() => act(u.id, "reject")} style={{
+                          padding: "5px 12px", borderRadius: 6, border: "none", background: "#FEE2E2",
+                          color: "#991B1B", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        }}>Reject</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// MAIN APP
+// ─────────────────────────────────────────────────────────────
+
+export default function App() {
+  const [user, setUser]       = useState(null);
+  const [page, setPage]       = useState("login");
+  const [params, setParams]   = useState({});
+  const [toasts, setToasts]   = useState([]);
+
+  const navigate = useCallback((to, p = {}) => {
+    setPage(to);
+    setParams(p);
+  }, []);
+
+  const toast = useCallback((msg, type = "success") => {
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4500);
+  }, []);
+
+  const login = (u) => {
+    setUser(u);
+    const defaultPage = { buyer: "browse", supplier: "supplier-dash", admin: "admin-dash" };
+    setPage(defaultPage[u.role] || "browse");
+    toast(`Welcome back, ${u.name.split(" ")[0]}!`);
+  };
+
+  const logout = () => {
+    setUser(null);
+    setPage("login");
+    toast("Signed out.");
+  };
+
+  const renderPage = () => {
+    switch (page) {
+      case "login":         return <Login onLogin={login} />;
+      case "browse":        return <BrowseLots navigate={navigate} toast={toast} />;
+      case "auction-room":  return <AuctionRoom params={params} navigate={navigate} toast={toast} />;
+      case "my-wins":       return <MyWins toast={toast} />;
+      case "supplier-dash": return <SupplierDashboard navigate={navigate} />;
+      case "add-inventory": return <AddInventory navigate={navigate} toast={toast} />;
+      case "create-lot":    return <CreateLot navigate={navigate} toast={toast} />;
+      case "admin-dash":    return <AdminDashboard navigate={navigate} />;
+      case "fraud-queue":   return <FraudQueue toast={toast} />;
+      case "verifications": return <Verifications toast={toast} />;
+      default:              return <Login onLogin={login} />;
+    }
+  };
+
+  return (
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", minHeight: "100vh", background: "#F8FAFC" }}>
+      <style>{`
+        * { box-sizing: border-box; }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        input:focus, select:focus { border-color: #0F4C2A !important; outline: none; }
+        button:hover:not(:disabled) { opacity: 0.9; }
+      `}</style>
+
+      {user ? (
+        <div style={{ display: "flex", minHeight: "100vh" }}>
+          <Sidebar user={user} page={page} navigate={navigate} logout={logout} />
+          <main style={{ flex: 1, overflowY: "auto", minHeight: "100vh" }}>
+            {renderPage()}
+          </main>
+        </div>
+      ) : renderPage()}
+
+      <Toast toasts={toasts} />
+    </div>
+  );
+}
